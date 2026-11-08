@@ -36,13 +36,82 @@ from typing import Any, Sequence
 import numpy as np
 import pandas as pd
 
-from ml_quality_datasets import FEATURES, prep
 from ml_quality_time_temp import load_cfg, summarize
-from ml_quality_train_fusion import predict_unsafe, status_from_p
-from ml_quality_train_shelf_life import predict_range
 from ml_utils import get_logger, get_paths
 
 LOG = get_logger("quality.inference")
+
+#: Canonical model input order. Never reorder; append instead.
+FEATURES: list[str] = [
+    "category",
+    "hours_since_prepared",
+    "danger_zone_minutes",
+    "hot_hold_minutes",
+    "chilled_minutes",
+    "current_temp_c",
+    "mean_temp_c",
+    "humidity_mean",
+    "cv_unsafe_prob",
+]
+
+#: Features that must never be NaN after prep (filled with the training median).
+_IMPUTE: dict[str, float] = {
+    "hours_since_prepared": 0.0,
+    "danger_zone_minutes": 0.0,
+    "hot_hold_minutes": 0.0,
+    "chilled_minutes": 0.0,
+    "current_temp_c": 20.0,
+    "mean_temp_c": 20.0,
+    "humidity_mean": 60.0,
+    "cv_unsafe_prob": 0.0,
+}
+
+T_REJECT: float = 0.50
+
+
+def prep(df: pd.DataFrame, categories: Sequence[str] | None = None,
+         *, medians: dict[str, float] | None = None) -> pd.DataFrame:
+    """Build the model matrix: fixed column order, categorical dtype, no NaN."""
+    missing = [c for c in FEATURES if c not in df.columns]
+    if missing:
+        raise KeyError(f"missing feature columns: {missing}")
+    x = df.loc[:, FEATURES].copy()
+    cats = list(categories) if categories is not None else sorted(df["category"].dropna().unique())
+    x["category"] = pd.Categorical(x["category"], categories=cats)
+    for col, default in _IMPUTE.items():
+        fill = (medians or {}).get(col, default)
+        x[col] = pd.to_numeric(x[col], errors="coerce").fillna(fill)
+    return x
+
+
+def predict_unsafe(bundle: dict, x: pd.DataFrame) -> np.ndarray:
+    """Calibrated p(unsafe) for a prepared feature frame."""
+    return np.asarray(bundle["iso"].predict(bundle["clf"].predict_proba(x)[:, 1]), dtype=float)
+
+
+def status_from_p(p, t_hold: float, t_reject: float = T_REJECT) -> np.ndarray:
+    """p(unsafe) -> GOOD / RISK / REJECTED."""
+    p = np.asarray(p, dtype=float)
+    t_hold = float(min(t_hold, t_reject - 1e-6))
+    return np.where(p >= t_reject, "REJECTED", np.where(p >= t_hold, "RISK", "GOOD"))
+
+
+def predict_point(model: Any, x) -> np.ndarray:
+    return np.clip(np.asarray(model.predict(x), dtype=float), 0.0, None)
+
+
+def predict_range(bundle: dict, x) -> np.ndarray:
+    """[p_low, p50, p_high, lower_bound], clipped at 0 and monotonically ordered."""
+    point = predict_point(bundle["model"], x)
+    cal = bundle["conformal"]
+    low = point + cal["q_low"]
+    high = point + cal["q_high"]
+    bound = point - bundle["qhat"]
+    stacked = np.column_stack([low, point, high, bound]).clip(min=0.0)
+    stacked = np.sort(stacked, axis=1)
+    # after sorting, the last column must be the conservative bound: re-assert it.
+    stacked[:, 3] = np.minimum(stacked[:, 3], stacked[:, 0])
+    return stacked
 
 _cache: dict[str, Any] = {}
 _cache_lock = threading.Lock()
