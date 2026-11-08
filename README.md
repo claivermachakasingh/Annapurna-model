@@ -64,11 +64,7 @@ python3 -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
 
 # Install runtime dependencies
-pip install -r requirements.txt
-
-# Start the REST API server
-uvicorn app:app --host 0.0.0.0 --port 7860
-# (API Docs available at http://localhost:7860/docs)
+pip install -r ml_pipeline/ml_requirements.txt
 ```
 
 ---
