@@ -1,3 +1,15 @@
+---
+title: Annapurna AI Food Quality & Demand Prediction
+emoji: 🍲
+colorFrom: green
+colorTo: emerald
+sdk: gradio
+sdk_version: 4.44.0
+app_file: app.py
+pinned: false
+license: mit
+---
+
 # Annapurna ML Inference & Model Serving (SIH-26234)
 
 Production machine learning inference pipeline and calibrated models for institutional kitchen demand prediction, surplus prevention, and food safety quality fusion.
