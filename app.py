@@ -91,6 +91,7 @@ def get_demand_bundle():
     return _demand_bundle
 
 
+
 def forecast_kitchen_demand(
     attendance: float,
     meal_type: str,
@@ -108,9 +109,11 @@ def forecast_kitchen_demand(
             "Saturday": 5,
             "Sunday": 6,
         }
+
         dow = dow_map.get(day_of_week_str, 0)
 
         bundle = get_demand_bundle()
+
         payload = {
             "attendance": float(attendance),
             "meal_type": meal_type.upper(),
@@ -119,20 +122,35 @@ def forecast_kitchen_demand(
         }
 
         res = predict_demand(bundle, payload)
-        quantiles = res.get("quantiles", {})
-        plan = res.get("plan", {})
+
+        # Read the actual prediction output structure
+        interval = res.get("prediction_interval", {})
+
+        recommended = res.get("recommended_production", 0)
+        median = interval.get("p50", res.get("predicted_consumption", 0))
+        p10 = interval.get("p10", 0)
+        p90 = interval.get("p90", 0)
+
+        surplus_risk = res.get("surplus_risk", "UNKNOWN")
+        decision_rule = res.get(
+            "operating_point_set_by",
+            "Newsvendor optimum with service floor"
+        )
 
         summary = (
-            f"### Production Recommendation: **{plan.get('recommended_units', 0):.0f} units**\n"
-            f"- **Median Forecast (P50):** {quantiles.get('0.5', 0):.1f} units\n"
-            f"- **80% Prediction Band (P10 - P90):** {quantiles.get('0.1', 0):.1f} – {quantiles.get('0.9', 0):.1f} units\n"
-            f"- **Avoided Surplus Risk:** {plan.get('avoided_surplus_pct', 0):.1f}%\n"
-            f"- **Decision Rule:** {res.get('decision_rule', 'Newsvendor optimum with service floor')}"
+            f"### Production Recommendation: **{recommended:.0f} units**\n"
+            f"- **Median Forecast (P50):** {median:.1f} units\n"
+            f"- **80% Prediction Band (P10 - P90):** {p10:.1f} – {p90:.1f} units\n"
+            f"- **Surplus Risk:** {surplus_risk}\n"
+            f"- **Decision Rule:** {decision_rule}"
         )
+
         return summary, res
+
     except Exception as e:
         err_msg = f"Error in demand forecast: {str(e)}"
         return err_msg, {"error": str(e)}
+
 
 
 # -----------------------------------------------------------------------------
