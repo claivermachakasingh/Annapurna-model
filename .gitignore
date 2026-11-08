@@ -1,0 +1,103 @@
+# =============================================================================
+# Annapurna ML - Git Ignore Rules for GitHub / Hugging Face Deployment
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# 1. Cache folders, bytecode, environments, and OS files
+# -----------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.coverage
+htmlcov/
+.cache/
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# -----------------------------------------------------------------------------
+# 2. Training datasets, data caches, and CSV/Parquet files
+# -----------------------------------------------------------------------------
+*.csv
+*.parquet
+*.npy
+*.npz
+features_cache/
+**/features_cache/
+
+# -----------------------------------------------------------------------------
+# 3. Experiment folders, temporary weights, and training runs
+# -----------------------------------------------------------------------------
+runs/
+**/runs/
+**/runs2/
+resume_roundtrip.pt
+
+# -----------------------------------------------------------------------------
+# 4. Reports, temporary logs, and evaluation metrics outputs
+# -----------------------------------------------------------------------------
+reports/
+**/reports/
+registry/reports/
+run_all_summary.json
+eval_report.json
+eval_history.json
+history.json
+run_state.json
+run.json
+*.log
+
+# -----------------------------------------------------------------------------
+# 5. Training scripts, data generation, benchmarking, and tests
+# -----------------------------------------------------------------------------
+ml_*_train*.py
+ml_anomaly_train_sih2026.py
+ml_demand_train.py
+ml_demand_train_sih2026.py
+ml_quality_train_sih2026.py
+ml_cv_train_cls.py
+ml_cv_train_food.py
+ml_cv_bakeoff.py
+ml_cv_dino_probe.py
+ml_cv_prepare_data.py
+ml_cv_prepare_food_data.py
+ml_data_gen_*.py
+ml_data_load_*.py
+generate_annapurna_data.py
+validate_annapurna_data.py
+ml_validate_sih2026.py
+ml_report_metrics.py
+ml_cv_eval_report.py
+ml_logistics_benchmark.py
+ml_logistics_bench_sih2026.py
+ml_tests_*.py
+ml_run_all.py
+CONTINUE_TRAINING.sh
+_*.py
+
+# -----------------------------------------------------------------------------
+# 6. Whitelist / Exceptions for Serving & Model Artifacts
+# -----------------------------------------------------------------------------
+# Un-ignore inference helper modules imported by ml_quality_inference.py
+!ml_pipeline/ml_quality_train_fusion.py
+!ml_pipeline/ml_quality_train_shelf_life.py
+
+# Ensure model files (.joblib) are tracked
+!registry/models/**/*.joblib
+!ml_pipeline/registry/models/**/*.joblib
+
+# Ensure model configuration & schema files (.json) are tracked
+!registry/models/**/*.json
+!ml_pipeline/registry/models/**/*.json
+
+# Ensure runtime dependencies are tracked
+!requirements.txt
+!ml_requirements*.txt
+!ml_pipeline/ml_requirements*.txt
