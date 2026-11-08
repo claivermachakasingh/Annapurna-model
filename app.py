@@ -1,9 +1,5 @@
-"""Annapurna ML Serving & Interactive Evaluation App for Hugging Face Spaces.
 
-Provides interactive evaluation and API endpoints for:
-1. Multimodal Food Safety & Quality Fusion (IoT + Vision + Shelf-life)
-2. Institutional Kitchen Demand Forecasting (Quantile Ensemble + CQR + Newsvendor)
-"""
+"""Annapurna ML Serving & Interactive Evaluation App."""
 
 from __future__ import annotations
 
@@ -11,25 +7,30 @@ import os
 import sys
 from pathlib import Path
 
-# Setup environment paths so ml_pipeline modules and model registries resolve correctly
+# --------------------------------------------------
+# PATH CONFIGURATION
+# --------------------------------------------------
+
 ROOT_DIR = Path(__file__).resolve().parent
 PIPELINE_DIR = ROOT_DIR / "ml_pipeline"
 REGISTRY_DIR = PIPELINE_DIR / "registry"
 
 sys.path.insert(0, str(PIPELINE_DIR))
+
 os.environ["ML_PIPELINE_ROOT"] = str(ROOT_DIR)
 os.environ["ML_REGISTRY_DIR"] = str(REGISTRY_DIR)
 
 import joblib
-import numpy as np
-import pandas as pd
 import gradio as gr
 
-# Import Annapurna ML core inference functions
-from ml_quality_inference import assess_safety, _load
+from ml_quality_inference import assess_safety
 from ml_demand_model import predict_demand
 from ml_utils import get_paths
 
+
+# --------------------------------------------------
+# FOOD SAFETY INFERENCE
+# --------------------------------------------------
 
 def evaluate_food_safety(
     category: str,
@@ -40,14 +41,14 @@ def evaluate_food_safety(
     cv_unsafe_prob: float,
     hours_to_expiry: float,
 ):
-    """Run multimodal safety fusion and remaining shelf-life estimation."""
     try:
-        # Parse temperature series
-        temp_strs = [t.strip() for t in temperatures_str.split(",") if t.strip()]
-        if not temp_strs:
-            temps = [65.0]
-        else:
-            temps = [float(t) for t in temp_strs]
+        temp_strs = [
+            t.strip()
+            for t in temperatures_str.split(",")
+            if t.strip()
+        ]
+
+        temps = [float(t) for t in temp_strs] if temp_strs else [65.0]
 
         res = assess_safety(
             category=category,
@@ -56,7 +57,11 @@ def evaluate_food_safety(
             step_min=float(step_minutes),
             humidity_mean=float(humidity_mean),
             cv_unsafe_prob=float(cv_unsafe_prob),
-            hours_to_expiry=float(hours_to_expiry) if hours_to_expiry > 0 else None,
+            hours_to_expiry=(
+                float(hours_to_expiry)
+                if hours_to_expiry > 0
+                else None
+            ),
         )
 
         status = res.get("status", "UNKNOWN")
@@ -64,33 +69,51 @@ def evaluate_food_safety(
         reasons = res.get("reasons", [])
         p_unsafe = res.get("p_unsafe", 0.0)
 
-        # Build readable summary
         summary = (
             f"### Safety Status: **{status}**\n"
             f"- **Unsafe Probability:** {p_unsafe * 100:.2f}%\n"
-            f"- **Conservative Lower Bound Safe Hours:** {hours_left.get('lower_bound', 0.0):.1f} hrs\n"
-            f"- **Estimated Range (P10 - P90):** {hours_left.get('p10', 0.0):.1f} hrs – {hours_left.get('p90', 0.0):.1f} hrs\n"
-            f"- **Flags / Reasons Triggered:** {', '.join(reasons) if reasons else 'None (Pass)'}\n"
-            f"- **Human Approval Required:** {res.get('requires_human_approval', True)}"
+            f"- **Conservative Lower Bound Safe Hours:** "
+            f"{hours_left.get('lower_bound', 0.0):.1f} hrs\n"
+            f"- **Estimated Range (P10 - P90):** "
+            f"{hours_left.get('p10', 0.0):.1f} – "
+            f"{hours_left.get('p90', 0.0):.1f} hrs\n"
+            f"- **Flags / Reasons:** "
+            f"{', '.join(reasons) if reasons else 'None (Pass)'}\n"
+            f"- **Human Approval Required:** "
+            f"{res.get('requires_human_approval', True)}"
         )
+
         return summary, res
+
     except Exception as e:
-        err_msg = f"Error during safety assessment: {str(e)}"
-        return err_msg, {"error": str(e)}
+        print(f"SAFETY ERROR: {e}", flush=True)
+        return f"Error during safety assessment: {e}", {"error": str(e)}
 
 
-# Cache demand model bundle
+# --------------------------------------------------
+# DEMAND MODEL LOADING
+# --------------------------------------------------
+
 _demand_bundle = None
+
 
 def get_demand_bundle():
     global _demand_bundle
+
     if _demand_bundle is None:
         paths = get_paths()
         model_path = paths.latest_model_dir("demand") / "model.joblib"
+
+        print(f"Loading demand model: {model_path}", flush=True)
+
         _demand_bundle = joblib.load(model_path)
+
     return _demand_bundle
 
 
+# --------------------------------------------------
+# DEMAND FORECASTING
+# --------------------------------------------------
 
 def forecast_kitchen_demand(
     attendance: float,
@@ -98,7 +121,10 @@ def forecast_kitchen_demand(
     day_of_week_str: str,
     service_level: float,
 ):
-    """Run LightGBM quantile demand forecasting with conformal calibration."""
+    """Run demand forecasting and display the actual model output."""
+
+    print("RUNNING UPDATED DEMAND FORECAST FUNCTION", flush=True)
+
     try:
         dow_map = {
             "Monday": 0,
@@ -123,15 +149,22 @@ def forecast_kitchen_demand(
 
         res = predict_demand(bundle, payload)
 
-        # Read the actual prediction output structure
+        # Actual model output structure
         interval = res.get("prediction_interval", {})
 
-        recommended = res.get("recommended_production", 0)
-        median = interval.get("p50", res.get("predicted_consumption", 0))
-        p10 = interval.get("p10", 0)
-        p90 = interval.get("p90", 0)
+        recommended = float(res.get("recommended_production", 0))
+        median = float(
+            interval.get(
+                "p50",
+                res.get("predicted_consumption", 0)
+            )
+        )
+
+        p10 = float(interval.get("p10", 0))
+        p90 = float(interval.get("p90", 0))
 
         surplus_risk = res.get("surplus_risk", "UNKNOWN")
+        expected_surplus = res.get("expected_surplus", 0)
         decision_rule = res.get(
             "operating_point_set_by",
             "Newsvendor optimum with service floor"
@@ -140,22 +173,30 @@ def forecast_kitchen_demand(
         summary = (
             f"### Production Recommendation: **{recommended:.0f} units**\n"
             f"- **Median Forecast (P50):** {median:.1f} units\n"
-            f"- **80% Prediction Band (P10 - P90):** {p10:.1f} – {p90:.1f} units\n"
+            f"- **80% Prediction Band (P10 - P90):** "
+            f"{p10:.1f} – {p90:.1f} units\n"
             f"- **Surplus Risk:** {surplus_risk}\n"
+            f"- **Expected Surplus:** {expected_surplus} units\n"
             f"- **Decision Rule:** {decision_rule}"
         )
+
+        print(f"DEMAND SUMMARY: {summary}", flush=True)
 
         return summary, res
 
     except Exception as e:
-        err_msg = f"Error in demand forecast: {str(e)}"
-        return err_msg, {"error": str(e)}
+        print(f"DEMAND FORECAST ERROR: {e}", flush=True)
+
+        return (
+            f"Error in demand forecast: {str(e)}",
+            {"error": str(e)}
+        )
 
 
+# --------------------------------------------------
+# GRADIO INTERFACE
+# --------------------------------------------------
 
-# -----------------------------------------------------------------------------
-# Gradio Interface Definition
-# -----------------------------------------------------------------------------
 CATEGORIES = [
     "rice_dal",
     "cooked_veg",
@@ -167,7 +208,11 @@ CATEGORIES = [
     "sweets",
 ]
 
-DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+DAYS = [
+    "Monday", "Tuesday", "Wednesday", "Thursday",
+    "Friday", "Saturday", "Sunday"
+]
+
 MEALS = ["LUNCH", "DINNER", "BREAKFAST", "SNACK"]
 
 theme = gr.themes.Soft(
@@ -175,67 +220,92 @@ theme = gr.themes.Soft(
     secondary_hue="amber",
 )
 
-with gr.Blocks(theme=theme, title="Annapurna ML - AI Food Redistribution Engine") as demo:
+
+with gr.Blocks(title="Annapurna ML - AI Food Redistribution Engine") as demo:
+
     gr.Markdown(
         """
         # 🍲 Annapurna AI - Food Quality & Demand Engine
+
         ### Official SIH-26234 Machine Learning Inference Suite
-        
-        This suite provides decision support for institutional kitchens and food redistribution:
-        - **Food Safety Fusion:** Merges computer vision spoilage confidence with IoT time-temperature histories and FSSAI standards.
-        - **Demand Forecasting:** LightGBM Quantile Ensembles + Conformalized Quantile Regression (CQR) to minimize food waste.
+
+        Decision support for institutional kitchens and food redistribution.
+
+        - **Food Safety Fusion:** Combines computer vision risk,
+          IoT time-temperature histories and food safety standards.
+        - **Demand Forecasting:** LightGBM quantile ensembles,
+          conformal prediction and production optimization.
         """
     )
 
+    # ----------------------------------------------
+    # FOOD SAFETY TAB
+    # ----------------------------------------------
+
     with gr.Tab("🛡️ Food Safety & Shelf-Life Assessment"):
-        gr.Markdown("#### Multimodal Safety Fusion (IoT Sensors + Vision Risk)")
+
+        gr.Markdown("#### Multimodal Safety Fusion")
+
         with gr.Row():
+
             with gr.Column():
+
                 in_category = gr.Dropdown(
                     label="Food Category",
                     choices=CATEGORIES,
                     value="rice_dal",
                 )
+
                 in_hours_prep = gr.Slider(
                     label="Hours Since Prepared",
-                    minimum=0.0,
-                    maximum=48.0,
-                    value=2.0,
+                    minimum=0,
+                    maximum=48,
+                    value=2,
                     step=0.5,
                 )
+
                 in_temps = gr.Textbox(
-                    label="Temperature Trace (°C, comma-separated)",
+                    label="Temperature Trace (°C)",
                     value="65, 62, 59, 57",
-                    info="Trace of sensor readings over time",
                 )
+
                 in_step_min = gr.Number(
                     label="Sensor Step Interval (minutes)",
-                    value=30.0,
+                    value=30,
                 )
+
                 in_humidity = gr.Slider(
                     label="Average Humidity (%)",
-                    minimum=10.0,
-                    maximum=100.0,
-                    value=55.0,
-                    step=1.0,
+                    minimum=10,
+                    maximum=100,
+                    value=55,
                 )
+
                 in_cv_prob = gr.Slider(
-                    label="Vision Spoilage Probability (CV Model)",
-                    minimum=0.0,
-                    maximum=1.0,
+                    label="Vision Spoilage Probability",
+                    minimum=0,
+                    maximum=1,
                     value=0.05,
                     step=0.01,
-                    info="Estimated visual deterioration score from camera",
                 )
+
                 in_expiry = gr.Number(
-                    label="Label Expiry in Hours (0 if unlabelled)",
-                    value=6.0,
+                    label="Label Expiry in Hours",
+                    value=6,
                 )
-                btn_safety = gr.Button("Assess Batch Safety", variant="primary")
+
+                btn_safety = gr.Button(
+                    "Assess Batch Safety",
+                    variant="primary",
+                )
 
             with gr.Column():
-                out_safety_summary = gr.Markdown(label="Assessment Summary")
-                out_safety_json = gr.JSON(label="Detailed Model Output")
+
+                out_safety_summary = gr.Markdown()
+
+                out_safety_json = gr.JSON(
+                    label="Detailed Model Output"
+                )
 
         btn_safety.click(
             fn=evaluate_food_safety,
@@ -248,74 +318,117 @@ with gr.Blocks(theme=theme, title="Annapurna ML - AI Food Redistribution Engine"
                 in_cv_prob,
                 in_expiry,
             ],
-            outputs=[out_safety_summary, out_safety_json],
+            outputs=[
+                out_safety_summary,
+                out_safety_json,
+            ],
         )
 
+    # ----------------------------------------------
+    # DEMAND FORECASTING TAB
+    # ----------------------------------------------
+
     with gr.Tab("📈 Kitchen Demand Forecasting"):
-        gr.Markdown("#### Institutional Kitchen Demand & Production Planning")
+
+        gr.Markdown(
+            "#### Institutional Kitchen Demand & Production Planning"
+        )
+
         with gr.Row():
+
             with gr.Column():
+
                 in_attendance = gr.Number(
                     label="Expected Attendance",
                     value=350,
-                    info="Estimated patrons or hostel residents",
                 )
+
                 in_meal_type = gr.Dropdown(
                     label="Meal Type",
                     choices=MEALS,
                     value="LUNCH",
                 )
+
                 in_dow = gr.Dropdown(
                     label="Day of Week",
                     choices=DAYS,
                     value="Wednesday",
                 )
+
                 in_service_level = gr.Slider(
                     label="Target Service Level (Floor)",
                     minimum=0.70,
                     maximum=0.99,
                     value=0.85,
                     step=0.01,
-                    info="Prevents kitchen stockouts while capping waste",
                 )
-                btn_demand = gr.Button("Forecast Demand Plan", variant="primary")
+
+                btn_demand = gr.Button(
+                    "Forecast Demand Plan",
+                    variant="primary",
+                )
 
             with gr.Column():
-                out_demand_summary = gr.Markdown(label="Forecast Summary")
-                out_demand_json = gr.JSON(label="Detailed Model Output")
+
+                out_demand_summary = gr.Markdown(
+                    label="Forecast Summary"
+                )
+
+                out_demand_json = gr.JSON(
+                    label="Detailed Model Output"
+                )
 
         btn_demand.click(
             fn=forecast_kitchen_demand,
-            inputs=[in_attendance, in_meal_type, in_dow, in_service_level],
-            outputs=[out_demand_summary, out_demand_json],
+            inputs=[
+                in_attendance,
+                in_meal_type,
+                in_dow,
+                in_service_level,
+            ],
+            outputs=[
+                out_demand_summary,
+                out_demand_json,
+            ],
         )
+
+    # ----------------------------------------------
+    # ABOUT TAB
+    # ----------------------------------------------
 
     with gr.Tab("ℹ️ About the Models"):
+
         gr.Markdown(
             """
-            ### System Subsystems & Guarantees
-            
-            1. **Visual Freshness Screening**:
-               - Backbone: `tf_efficientnet_lite0` & DINOv2 linear probe.
-               - Gated on **≥ 0.98 unsafe recall** on unseen-source splits.
-            
-            2. **Multimodal Safety Fusion**:
-               - Monotonic LightGBM calibrated with isotonic regression.
-               - Integrates FSSAI danger zone guidelines (5°C - 60°C).
-            
-            3. **Shelf-Life Prediction**:
-               - Regresses remaining safe hours with split conformal intervals.
-               - Guarantees finite-sample coverage on the conservative lower bound.
-            
-            4. **Demand Optimization**:
-               - LightGBM quantile regression ensemble at P10, P50, P75, P90, P95.
-               - Conformalized Quantile Regression (CQR) avoids data leakage.
-               - Avoids ~45.6% surplus waste compared to historical baseline.
+            ### System Subsystems
+
+            1. **Visual Freshness Screening**
+               - Computer vision-based spoilage screening.
+
+            2. **Multimodal Safety Fusion**
+               - Combines sensor data and vision risk.
+
+            3. **Shelf-Life Prediction**
+               - Estimates remaining safe hours.
+
+            4. **Demand Optimization**
+               - LightGBM quantile regression.
+               - Conformal prediction intervals.
+               - Newsvendor production optimization.
+
+            **Note:** Synthetic simulator data is not evidence
+            of performance in a real institutional kitchen.
             """
         )
 
+
+# --------------------------------------------------
+# RENDER SERVER STARTUP
+# --------------------------------------------------
+
 if __name__ == "__main__":
+
     demo.queue().launch(
         server_name="0.0.0.0",
-        server_port=int(os.environ.get("PORT", 7860))
+        server_port=int(os.environ.get("PORT", 7860)),
     )
