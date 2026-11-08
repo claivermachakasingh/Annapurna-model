@@ -8,6 +8,10 @@
 # Root files to track
 !.gitignore
 !README.md
+!app.py
+!requirements.txt
+!.github/
+!.github/**
 
 # Allow ml_pipeline directory
 !ml_pipeline/

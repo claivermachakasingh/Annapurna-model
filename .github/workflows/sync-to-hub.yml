@@ -1,0 +1,24 @@
+name: Sync to Hugging Face Hub
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  sync-to-hub:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+      - name: Push to Hugging Face
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          if [ -n "$HF_TOKEN" ]; then
+            git push https://claivermachakasingh:$HF_TOKEN@huggingface.co/spaces/claivermachakasingh/Annapurna-model main --force
+          else
+            echo "HF_TOKEN secret not set in GitHub repository settings. Skipping automatic sync."
+          fi
